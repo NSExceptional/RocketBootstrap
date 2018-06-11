@@ -2,6 +2,7 @@ LIBRARY_NAME = librocketbootstrap
 librocketbootstrap_FILES = Tweak.x Shims.x
 librocketbootstrap_LIBRARIES = substrate
 librocketbootstrap_FRAMEWORKS = Foundation
+librocketbootstrap_PRIVATE_FRAMEWORKS = AppSupport
 librocketbootstrap_USE_MODULES = 0
 
 TOOL_NAME = rocketd _rocketd_reenable

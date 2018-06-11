@@ -6,6 +6,8 @@
 #import <libkern/OSAtomic.h>
 #import <substrate.h>
 
+CFStringRef CPCopyBundleIdentifierFromAuditToken(audit_token_t *token, bool *unknown);
+
 static unfair_lock shim_lock;
 
 kern_return_t bootstrap_look_up3(mach_port_t bp, const name_t service_name, mach_port_t *sp, pid_t target_pid, const uuid_t instance_id, uint64_t flags) __attribute__((weak_import));
@@ -110,7 +112,47 @@ static bool has_hooked_messaging_center;
 }
 
 %end
+%end
 
+%group notification_center
+static bool has_hooked_notification_center;
+%hook CPDistributedNotificationCenter
+
+- (void)_receivedCheckIn:(unsigned int)port auditToken:(audit_token_t *)token {
+	if (objc_getAssociatedObject(self, &has_hooked_notification_center)) {
+		bool b;
+    	NSString *bundleID = (__bridge id)CPCopyBundleIdentifierFromAuditToken(token, &b);
+		NSLock **_lock = CHIvarRef(self, _lock, NSLock *);
+		if (port && _lock) {
+			[*_lock lock];
+			if (port == MACH_PORT_NULL) {
+				NSString **_centerName = CHIvarRef(self, _centerName, NSString *);
+				if (_centerName && *_centerName) {
+					mach_port_t bootstrap = MACH_PORT_NULL;
+					task_get_bootstrap_port(mach_task_self(), &bootstrap);
+					rocketbootstrap_look_up(bootstrap, [*_centerName UTF8String], &port);
+				}
+			}
+
+			[*_lock unlock];
+			%orig(port, token);
+		}
+	}
+
+    %orig; 
+}
+
+- (void)runServerOnCurrentThread
+{
+	if (objc_getAssociatedObject(self, &has_hooked_notification_center)) {
+		NSString **_centerName = CHIvarRef(self, _centerName, NSString *);
+		if (_centerName && *_centerName) {
+			rocketbootstrap_unlock([*_centerName UTF8String]);
+		}
+	}
+	%orig();
+}
+%end
 %end
 
 void rocketbootstrap_distributedmessagingcenter_apply(CPDistributedMessagingCenter *messaging_center)
@@ -124,6 +166,19 @@ void rocketbootstrap_distributedmessagingcenter_apply(CPDistributedMessagingCent
 	}
 	unfair_lock_unlock(&shim_lock);
 	objc_setAssociatedObject(messaging_center, &has_hooked_messaging_center, (id)kCFBooleanTrue, OBJC_ASSOCIATION_ASSIGN);
+}
+
+void rocketbootstrap_distributednotificationcenter_apply(CPDistributedNotificationCenter *notification_center)
+{
+	if (rocketbootstrap_is_passthrough())
+		return;
+	unfair_lock_lock(&shim_lock);
+	if (!has_hooked_notification_center) {
+		has_hooked_notification_center = true;
+		%init(notification_center);
+	}
+	unfair_lock_unlock(&shim_lock);
+	objc_setAssociatedObject(notification_center, &has_hooked_notification_center, (id)kCFBooleanTrue, OBJC_ASSOCIATION_ASSIGN);
 }
 
 #ifdef __clang__
